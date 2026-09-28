@@ -64,6 +64,17 @@ The scripts in [`frida-scripts/src/`](frida-scripts/src) are written against
 live method tracer, a CommonCrypto key/plaintext monitor, and a soft iOS-version
 spoofer, all working on current Frida.
 
+### 4. Findings that map to a standard, not a text file
+An assessment is only worth what its report is worth. `ios protections` reads a
+decrypted Mach-O in **pure Python** — PIE, stack canaries, ARC, the FairPlay
+`cryptid`, an embedded code signature, `get-task-allow`, `@rpath` hygiene — with
+no `otool` and no macOS, so it runs on any binary `ios pull` brings back.
+`ios report` then stitches `classify`, `protections`, and a captured `secrets`
+run into one Markdown report where every finding carries its **OWASP MASVS v2**
+control and a severity, and `ios checklist` prints those controls beside the verb
+that tests each one. Nothing is invented: a section that had no input is marked
+*not assessed*, so the gaps stay visible.
+
 ---
 
 ## Command reference
@@ -72,8 +83,9 @@ Run `ios help` for the full list. Grouped:
 
 - **Recon** — `apps`, `ps`, `ssh`
 - **Dynamic (Frida)** — `explore`, `spawn`, `attach`, `spoof`, `crypto`, `dump`, `trace`, `repl`, `medusa`, `r2`
-- **Static RE** — `pull`, `classify`, `headers`, `decompile`, `ilspy`, `il2cpp`, `hermes`, `mobsf`
+- **Static RE** — `pull`, `classify`, `headers`, `decompile`, `ilspy`, `il2cpp`, `hermes`, `protections`, `mobsf`
 - **HTTPS interception** — `intercept`, `intercept-all`, `secrets`
+- **Reporting** — `checklist`, `report`
 
 ## Architecture
 

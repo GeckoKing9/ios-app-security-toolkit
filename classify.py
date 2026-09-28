@@ -84,6 +84,39 @@ def classify(path):
         print(f"    Recoverability: {rec}")
         print(f"    Best tool:      {tool}\n")
 
+def summarize(path):
+    """Non-printing version for report.py: returns a dict describing the app's
+    build. native=True means Objective-C/Swift with no near-source runtime."""
+    app = app_dir(path)
+    if not os.path.isdir(app):
+        return {"native": None, "framework": None, "recoverability": None,
+                "tool": None, "error": f"not a directory: {app}"}
+    if find(app, "Assembly-CSharp.dll") or find(app, "libmonosgen*.dylib"):
+        return {"native": False, "framework": "Unity (Mono)",
+                "recoverability": "HIGH — near-original C#", "tool": "ILSpy"}
+    if find(app, "global-metadata.dat") or find(app, "UnityFramework"):
+        return {"native": False, "framework": "Unity (IL2CPP)",
+                "recoverability": "MEDIUM — recovered C# structure", "tool": "Il2CppDumper"}
+    if find(app, "libxamarin*.dylib") or [d for d in find(app, "*.dll") if "Assembly-CSharp" not in d]:
+        return {"native": False, "framework": "Xamarin / .NET MAUI",
+                "recoverability": "HIGH — near-original C#", "tool": "ILSpy"}
+    if find(app, "libhermes*.dylib") or find(app, "*.hbc"):
+        return {"native": False, "framework": "React Native (Hermes)",
+                "recoverability": "MEDIUM — Hermes bytecode", "tool": "hermes-dec"}
+    if find(app, "main.jsbundle") or find(app, "index.*.bundle"):
+        return {"native": False, "framework": "React Native (JSC)",
+                "recoverability": "HIGH — readable JavaScript", "tool": "js-beautify"}
+    if find(app, "Flutter.framework") or find(app, "libapp.so"):
+        return {"native": False, "framework": "Flutter",
+                "recoverability": "LOW — native-compiled Dart", "tool": "blutter / Ghidra"}
+    if find(app, "cordova.js") or (find(app, "index.html") and find(app, "www")):
+        return {"native": False, "framework": "Cordova / Ionic",
+                "recoverability": "HIGH — plain HTML/JS/CSS", "tool": "read www/"}
+    return {"native": True, "framework": "Native (Objective-C / Swift)",
+            "recoverability": "LOW — pseudocode + live runtime only",
+            "tool": "ios headers / decompile / explore"}
+
+
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("usage: classify.py <path-to-.app-or-unzipped-IPA>")

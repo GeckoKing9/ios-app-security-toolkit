@@ -62,7 +62,13 @@ ios — iOS app security assessment driver  (device: $IP, frida: $FRIDA_HOST)
   ios ilspy <dll> [out]    Decompile .NET/Unity-Mono/Xamarin DLL to C#
   ios il2cpp <bin> <meta>  Unity IL2CPP dump (binary + global-metadata.dat)
   ios hermes <bundle>      Decompile a React Native Hermes .hbc bundle
+  ios protections <binary> Compile-time hardening of a Mach-O (PIE, canaries, ARC, FairPlay, debuggable)
   ios mobsf                Start MobSF web UI (Docker) at http://localhost:8000
+
+  --- reporting (map the whole assessment to a standard) ---
+  ios checklist            Print the OWASP MASVS v2 checklist + which verb tests each control
+  ios report --target NAME [--app P] [--binary P] [--flows F] [--out F]
+                             Assemble a MASVS-mapped Markdown pentest report from the artefacts
 
   --- HTTPS interception (defeats certificate pinning at the BoringSSL layer) ---
   ios intercept <app>      FULL two-way (req+resp), app keeps working.
@@ -120,6 +126,9 @@ case "$cmd" in
   intercept)     "$VENV/python" "$ROOT/intercept.py" "$@" ;;
   intercept-all) "$VENV/python" "$ROOT/intercept.py" --all ;;
   secrets)       "$VENV/python" "$ROOT/extract-secrets.py" "$@" ;;
+  protections)   "$VENV/python" "$ROOT/protections.py" "$@" ;;
+  checklist)     "$VENV/python" "$ROOT/masvs.py" ;;
+  report)        "$VENV/python" "$ROOT/report.py" "$@" ;;
   help|-h|--help) usage ;;
   *) echo "unknown: $cmd"; echo; usage; exit 1 ;;
 esac
