@@ -1,0 +1,26 @@
+# Heavy vendored engines — see SETUP.md, never commit
+vendor/
+bin/ipsw
+node_modules/
+.venv/
+
+# Third-party clones (fetched in SETUP.md)
+medusa/
+dump/
+interception/
+
+# Compiled Frida bundles — build from src/ with ./frida-scripts/build.sh
+frida-scripts/*.js
+!frida-scripts/crypto-monitor.js
+
+# Pulled apps + decompiler output — may contain copyrighted app code
+workspace/
+
+# Secrets & local state
+*.env
+*creds*
+
+# cruft
+__pycache__/
+*.pyc
+package-lock.json

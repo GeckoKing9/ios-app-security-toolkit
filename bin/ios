@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+# ios — one driver for the whole iOS app-assessment lifecycle: recon, static
+# reverse-engineering across every app runtime, dynamic instrumentation, and
+# TLS interception. Every Frida op targets a jailbroken test device over WiFi
+# (frida-server in network mode) — no USB, no cable.
+#
+# Config (see SETUP.md): a creds file at $IOS_CREDS (default ~/.ios-pentest-creds.env)
+# supplies the device address + SSH password. Nothing is hardcoded.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VENV="$ROOT/.venv/bin"
+SCRIPTS="$ROOT/frida-scripts"
+BIN="$ROOT/bin"
+WORK="$ROOT/workspace"        # pulled apps / decompiled output land here
+VENDOR="$ROOT/vendor"
+GHIDRA="$VENDOR/ghidra"       # symlink to your ghidra_*_PUBLIC install
+export DOTNET_ROOT="$VENDOR/dotnet"
+export PATH="$DOTNET_ROOT:$PATH"
+export DOTNET_CLI_TELEMETRY_OPTOUT=1
+
+# Load test-device connection details from the creds file (never committed).
+CREDS="${IOS_CREDS:-$HOME/.ios-pentest-creds.env}"
+[ -f "$CREDS" ] || { echo "missing creds file: $CREDS  (see SETUP.md)"; exit 1; }
+IP="$(grep -E '^DEVICE_IP=' "$CREDS" | cut -d= -f2)"
+FRIDA_HOST="$(grep -E '^FRIDA_HOST=' "$CREDS" | cut -d= -f2)"
+SSHPASS_VAL="$(grep -E '^DEVICE_SSH_PASS=' "$CREDS" | cut -d= -f2 | tr -d '"')"
+SSH_USER="$(grep -E '^DEVICE_SSH_USER=' "$CREDS" | cut -d= -f2 || true)"; SSH_USER="${SSH_USER:-mobile}"
+
+sshphone() { sshpass -p "$SSHPASS_VAL" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$SSH_USER@$IP" "$@"; }
+
+usage() {
+  cat <<EOF
+ios — iOS app security assessment driver  (device: $IP, frida: $FRIDA_HOST)
+
+  --- recon ---
+  ios apps                 List installed apps (bundle IDs) = your targets
+  ios ps                   List running processes on the device
+  ios ssh [cmd...]         SSH into the device
+
+  --- dynamic instrumentation (Frida) ---
+  ios explore <bundleid>   Objection interactive shell inside an app
+                             (auto SSL-unpin + jailbreak-bypass on attach)
+  ios spawn <bundleid> <script.js>   Launch app with a Frida script from frida-scripts/
+  ios attach <name> <script.js>      Attach a Frida script to a running app
+  ios spoof <bundleid>     Launch app pretending to be a newer iOS (soft version gates only)
+  ios crypto <bundleid>    Watch encryption keys/IVs/plaintext live (crypto-monitor.js)
+  ios dump <bundleid>      Runtime class/method dump (dump-classes.js REPL)
+  ios trace <name>         Live method tracer REPL (method-trace.js)
+  ios scripts              List available Frida scripts
+  ios repl <name>          Bare Frida REPL attached to a running app
+  ios medusa               Launch Medusa (Frida automation, 100+ modules)
+  ios r2 <path-on-device>  Reverse-engineer a binary ON the device (radare2)
+  ios build                Recompile the ObjC-bridge Frida scripts after editing
+
+  --- static reverse-engineering (get the code) ---
+  ios pull <bundleid>      Decrypt + pull an installed app's IPA to workspace/
+                             (app must be in the FOREGROUND on the device)
+  ios classify <path>      Detect the app's framework + what code is recoverable
+  ios headers <binary>     Class-dump ObjC+Swift headers (ipsw, Swift-aware)
+  ios decompile <binary>   Ghidra headless -> readable C pseudocode in workspace/
+  ios ilspy <dll> [out]    Decompile .NET/Unity-Mono/Xamarin DLL to C#
+  ios il2cpp <bin> <meta>  Unity IL2CPP dump (binary + global-metadata.dat)
+  ios hermes <bundle>      Decompile a React Native Hermes .hbc bundle
+  ios mobsf                Start MobSF web UI (Docker) at http://localhost:8000
+
+  --- HTTPS interception (defeats certificate pinning at the BoringSSL layer) ---
+  ios intercept <app>      FULL two-way (req+resp), app keeps working.
+                             Needs device Wi-Fi proxy = 127.0.0.1:8080 (2 taps).
+  ios intercept <app> --quick   Hands-off, REQUESTS only (may break the app).
+  ios intercept-all        FULL, every app launched while running (spawn-gating)
+  ios secrets [flows]      Pull JWTs / tokens / API keys / cookies from a capture
+
+Authorized testing only — see README.md. Point this at apps you own or apps
+built to be attacked (DVIA-v2, OWASP iGoat), never at third-party production apps.
+Available scripts: $(ls "$SCRIPTS"/*.js 2>/dev/null | xargs -n1 basename | tr '\n' ' ')
+EOF
+}
+
+cmd="${1:-help}"; shift || true
+case "$cmd" in
+  apps)    "$VENV/frida-ps" -H "$FRIDA_HOST" -ai ;;
+  ps)      "$VENV/frida-ps" -H "$FRIDA_HOST" ;;
+  ssh)     sshphone "$@" ;;
+  scripts) ls -1 "$SCRIPTS" ;;
+  explore) "$VENV/objection" -N -h "${FRIDA_HOST%:*}" -P "${FRIDA_HOST#*:}" -n "$1" start \
+             -s 'ios sslpinning disable' \
+             -s 'ios jailbreak disable' ;;
+  spawn)   "$VENV/frida" -H "$FRIDA_HOST" -f "$1" -l "$SCRIPTS/$2" ;;
+  attach)  "$VENV/frida" -H "$FRIDA_HOST" -n "$1" -l "$SCRIPTS/$2" ;;
+  spoof)   "$VENV/frida" -H "$FRIDA_HOST" -f "$1" -l "$SCRIPTS/spoof-ios-version.js" ;;
+  crypto)  "$VENV/frida" -H "$FRIDA_HOST" -f "$1" -l "$SCRIPTS/crypto-monitor.js" ;;
+  dump)    "$VENV/frida" -H "$FRIDA_HOST" -n "$1" -l "$SCRIPTS/dump-classes.js" ;;
+  trace)   "$VENV/frida" -H "$FRIDA_HOST" -n "$1" -l "$SCRIPTS/method-trace.js" ;;
+  repl)    "$VENV/frida" -H "$FRIDA_HOST" -n "$1" ;;
+  medusa)  cd "$ROOT/medusa" && "$VENV/python" medusa_ios.py "$@" ;;
+  r2)      sshphone "radare2 -A '$1'" ;;
+  build)   "$SCRIPTS/build.sh" ;;
+  pull)    mkdir -p "$WORK"; "$VENV/python" "$ROOT/dump/dump.py" \
+             -H "$IP" -p 22 -u "$SSH_USER" -P "$SSHPASS_VAL" -o "$WORK" "$1" ;;
+  classify) "$VENV/python" "$ROOT/classify.py" "$1" ;;
+  headers) "$BIN/ipsw" class-dump --arch ARM64 "$1" ;;   # A11 = arm64 slice
+  decompile)
+             mkdir -p "$WORK"
+             base="$(basename "$1")"
+             GHIDRA_INSTALL_DIR="$GHIDRA" "$VENV/python" "$ROOT/decompile.py" \
+               "$1" "$WORK/$base.decompiled.c"
+             echo "-> $WORK/$base.decompiled.c" ;;
+  ilspy)   out="${2:-$WORK/$(basename "$1").cs}"
+             "$VENDOR/dotnet-tools/ilspycmd" "$1" -o "$(dirname "$out")" 2>/dev/null \
+               || "$VENDOR/dotnet-tools/ilspycmd" "$1" > "$out"
+             echo "-> $out (or dir)" ;;
+  il2cpp)  mkdir -p "$WORK/il2cpp-out"
+             ( cd "$VENDOR/Il2CppDumper" && "$DOTNET_ROOT/dotnet" Il2CppDumper.dll "$1" "$2" "$WORK/il2cpp-out" )
+             echo "-> $WORK/il2cpp-out" ;;
+  hermes)  "$VENV/hbc-decompiler" "$1" "$WORK/$(basename "$1").hasm.py" 2>&1
+             echo "-> $WORK/$(basename "$1").hasm.py" ;;
+  mobsf)   echo "MobSF -> http://localhost:8000 (Ctrl-C to stop)"
+             docker run -it --rm -p 8000:8000 opensecurity/mobile-security-framework-mobsf:latest ;;
+  intercept)     "$VENV/python" "$ROOT/intercept.py" "$@" ;;
+  intercept-all) "$VENV/python" "$ROOT/intercept.py" --all ;;
+  secrets)       "$VENV/python" "$ROOT/extract-secrets.py" "$@" ;;
+  help|-h|--help) usage ;;
+  *) echo "unknown: $cmd"; echo; usage; exit 1 ;;
+esac
